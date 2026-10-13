@@ -416,6 +416,41 @@ class WipeTestCase(common.BleachbitTestCase):
         self.assertEqual(len(first_suffix), 185)
         self.assertEqual(len(second_suffix), 180)
 
+    def test_wipe_path_tempfile_eexist_retry(self):
+        """Temporary file creation retries with shorter name on EEXIST
+
+        Regression test for
+        https://github.com/bleachbit/bleachbit/issues/1891 : on Windows,
+        tempfile._mkstemp_inner() treats PermissionError as a name
+        collision and keeps retrying candidate names until TMP_MAX
+        attempts are exhausted, then raises
+        FileExistsError(errno.EEXIST, "No usable temporary file name
+        found"). Because EEXIST was not in temporaryfile()'s retry
+        tuple, that exception used to propagate instead of triggering
+        the existing maxlen-shrinking fallback.
+        """
+        mock_file = self._make_mock_file()
+        mock_file.write.side_effect = IOError(errno.EFBIG, 'File too large')
+        ntf_mock = mock.Mock()
+        ntf_mock.side_effect = [
+            FileExistsError(
+                errno.EEXIST, 'No usable temporary file name found'),
+            FileExistsError(
+                errno.EEXIST, 'No usable temporary file name found'),
+            mock_file
+        ]
+        with self._wipe_path_common_mocks() as stack:
+            stack.enter_context(mock.patch(
+                'bleachbit.Wipe.tempfile.NamedTemporaryFile', ntf_mock))
+            list(wipe_path(self.tempdir))
+        self.assertEqual(ntf_mock.call_count, 3)
+        first_suffix = ntf_mock.call_args_list[0][1]['suffix']
+        second_suffix = ntf_mock.call_args_list[1][1]['suffix']
+        third_suffix = ntf_mock.call_args_list[2][1]['suffix']
+        self.assertEqual(len(first_suffix), 185)
+        self.assertEqual(len(second_suffix), 180)
+        self.assertEqual(len(third_suffix), 175)
+
     def test_wipe_path_write_enospc(self):
         """Write loop handles ENOSPC by reducing block size"""
         mock_file = self._make_mock_file()
